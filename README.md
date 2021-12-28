@@ -2,6 +2,11 @@
 Code for generating synthetic text images as described in ["Synthetic Data for Text Localisation in Natural Images", Ankush Gupta, Andrea Vedaldi, Andrew Zisserman, CVPR 2016](http://www.robots.ox.ac.uk/~vgg/data/scenetext/).
 
 
+#download data folder from drive
+# run gen.py
+#parameter --lang 
+
+
 **Synthetic Scene-Text Image Samples**
 ![Synthetic Scene-Text Samples](samples.png "Synthetic Samples")
 
@@ -45,7 +50,7 @@ For an explanation of the fields in `dset.h5` (e.g.: `seg`,`area`,`label`), plea
 
 ### Pre-processed Background Images
 The 8,000 background images used in the paper, along with their segmentation and depth masks, have been uploaded here:
-`http://thor.robots.ox.ac.uk/~vgg/data/scenetext/preproc/<filename>`, where, `<filename>` can be:
+`http://www.robots.ox.ac.uk/~vgg/data/scenetext/preproc/<filename>`, where, `<filename>` can be:
 
 |    filenames    | size |                      description                     |             md5 hash             |
 |:--------------- | ----:|:---------------------------------------------------- |:-------------------------------- |
@@ -56,10 +61,7 @@ The 8,000 background images used in the paper, along with their segmentation and
 
 Note: due to large size, `depth.h5` is also available for download as 3-part split-files of 5G each.
 These part files are named: `depth.h5-00, depth.h5-01, depth.h5-02`. Download using the path above, and put them together using `cat depth.h5-0* > depth.h5`.
-To download, use the something like the following:
-```
-wget -c http://thor.robots.ox.ac.uk/~vgg/data/scenetext/preproc/<filename>
-```
+
 [`use_preproc_bg.py`](https://github.com/ankush-me/SynthText/blob/master/use_preproc_bg.py) provides sample code for reading this data.
 
 Note: I do not own the copyright to these images.
@@ -71,9 +73,6 @@ Note: I do not own the copyright to these images.
 - @gachiemchiep has adapted for Japanese [here](https://github.com/gachiemchiep/SynthText).
 - @gungui98 has adapted for Vietnamese [here](https://github.com/gungui98/SynthText).
 - @youngkyung has adapted for Korean [here](https://github.com/youngkyung/SynthText_kr).
-- @kotomiDu has developed an interactive UI for generating images with text [here](https://github.com/kotomiDu/GameSynthText).
-- @LaJoKoch has adapted for German [here](https://github.com/LaJoKoch/SynthTextGerman).
 
 ### Further Information
 Please refer to the paper for more information, or contact me (email address in the paper).
-

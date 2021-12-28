@@ -7,6 +7,8 @@ Main script for synthetic text rendering.
 
 from __future__ import division
 import copy
+import random
+
 import cv2
 import h5py
 from PIL import Image
@@ -16,12 +18,16 @@ import matplotlib.pyplot as plt
 import os.path as osp
 import scipy.ndimage as sim
 import scipy.spatial.distance as ssd
+
+import configuration
+import create_recognition_dataset
 import synth_utils as su
 import text_utils as tu
 from colorize3_poisson import Colorize
 from common import *
 import traceback, itertools
 
+from logger import wrap, entering, exiting
 
 class TextRegions(object):
     """
@@ -31,9 +37,9 @@ class TextRegions(object):
     minWidth = 30 #px
     minHeight = 30 #px
     minAspect = 0.3 # w > 0.3*h
-    maxAspect = 7
+    maxAspect = 15
     minArea = 100 # number of pix
-    pArea = 0.60 # area_obj/area_minrect >= 0.6
+    pArea = 0.3 # area_obj/area_minrect >= 0.6
 
     # RANSAC planar fitting params:
     dist_thresh = 0.10 # m
@@ -42,7 +48,6 @@ class TextRegions(object):
     min_z_projection = 0.25
 
     minW = 20
-
     @staticmethod
     def filter_rectified(mask):
         """
@@ -62,36 +67,60 @@ class TextRegions(object):
         if return_rot:
             return h,w,R
         return h,w
- 
+    
     @staticmethod
-    def filter(seg,area,label):
+    def get_canny_image(img):
+        EDGE_LOWER_THRESHOLD = 100
+        EDGE_UPPER_THRESHOLD = 150
+        temp = img.copy()
+        temp = cv2.cvtColor(temp, cv2.COLOR_BGR2GRAY)
+        canny = cv2.Canny(temp, EDGE_LOWER_THRESHOLD, EDGE_UPPER_THRESHOLD)
+        return canny
+    
+    @staticmethod
+    def get_edge_pixel_count(canny_img, coords):
+        cnt = 0
+        for coord in coords:
+            if canny_img[int(coord[0])][int(coord[1])] == 255:
+                cnt += 1
+        return cnt
+        
+    @staticmethod
+    def filter(img,seg,area,label):
         """
         Apply the filter.
         The final list is ranked by area.
         """
+        
         good = label[area > TextRegions.minArea]
         area = area[area > TextRegions.minArea]
         filt,R = [],[]
+        canny_image = TextRegions.get_canny_image(img)
+        #cv2.imwrite("canny.jpg", canny_image)
         for idx,i in enumerate(good):
             mask = seg==i
             xs,ys = np.where(mask)
-
             coords = np.c_[xs,ys].astype('float32')
-            rect = cv2.minAreaRect(coords)          
+            edge_pixel_count = TextRegions.get_edge_pixel_count(canny_image, coords)
+            #img = 255*(mask==True)
+            #cv2.imwrite("temp/{}.jpg".format(i), img)
+            rect = cv2.minAreaRect(coords)
+            #box = np.array(cv2.cv.BoxPoints(rect))
             box = np.array(cv2.boxPoints(rect))
+            #a = np.sum(area)
             h,w,rot = TextRegions.get_hw(box,return_rot=True)
-
             f = (h > TextRegions.minHeight 
                 and w > TextRegions.minWidth
                 and TextRegions.minAspect < w/h < TextRegions.maxAspect
-                and area[idx]/w*h > TextRegions.pArea)
+                and area[idx]/(w*h) > TextRegions.pArea
+                and edge_pixel_count/len(coords) <= 0.2)
             filt.append(f)
             R.append(rot)
 
         # filter bad regions:
         filt = np.array(filt)
         area = area[filt]
-        R = [R[i] for i in xrange(len(R)) if filt[i]]
+        R = [R[i] for i in range(len(R)) if filt[i]]
 
         # sort the regions based on areas:
         aidx = np.argsort(-area)
@@ -111,7 +140,7 @@ class TextRegions(object):
 
         y_m,x_m = np.where(mask)
         mask_idx = np.zeros_like(mask,'int32')
-        for i in xrange(len(y_m)):
+        for i in range(len(y_m)):
             mask_idx[y_m[i],x_m[i]] = i
 
         xp,xn = np.zeros_like(mask), np.zeros_like(mask)
@@ -136,7 +165,7 @@ class TextRegions(object):
         Y = np.transpose(np.c_[ys,ys+s,ys-s,ys+s,ys-s][:,:,None],(1,2,0))
         sample_idx = np.concatenate([Y,X],axis=1)
         mask_nn_idx = np.zeros((5,sample_idx.shape[-1]),'int32')
-        for i in xrange(sample_idx.shape[-1]):
+        for i in range(sample_idx.shape[-1]):
             mask_nn_idx[:,i] = mask_idx[sample_idx[:,:,i][:,0],sample_idx[:,:,i][:,1]]
         return mask_nn_idx
 
@@ -170,12 +199,59 @@ class TextRegions(object):
         return plane_info
 
     @staticmethod
-    def get_regions(xyz,seg,area,label):
-        regions = TextRegions.filter(seg,area,label)
+    def get_regions(rgb, xyz,seg,area,label):
+        regions = TextRegions.filter(rgb, seg,area,label)
         # fit plane to text-regions:
         regions = TextRegions.filter_depth(xyz,seg,regions)
         return regions
 
+
+def nice_homography(H):
+    def _homographyBB(bbs, H, offset=None):
+        """
+        Apply homography transform to bounding-boxes.
+        BBS: 2 x 4 x n matrix  (2 coordinates, 4 points, n bbs).
+        Returns the transformed 2x4xn bb-array.
+
+        offset : a 2-tuple (dx,dy), added to points before transfomation.
+        """
+        eps = 1e-16
+        # check the shape of the BB array:
+        t,f,n = bbs.shape
+        assert (t==2) and (f==4)
+
+        # append 1 for homogenous coordinates:
+        bbs_h = np.reshape(np.r_[bbs, np.ones((1,4,n))], (3,4*n), order='F')
+        if offset != None:
+            bbs_h[:2,:] += np.array(offset)[:,None]
+
+        # perpective:
+        bbs_h = H.dot(bbs_h)
+        bbs_h /= (bbs_h[2,:]+eps)
+
+        bbs_h = np.reshape(bbs_h, (3,4,n), order='F')
+        return bbs_h[:2,:,:]
+
+    # Construct a bb0 (2x4x1), and transform it to bb. Just check the points order of bb0 and bb.
+    wordBB0 = np.array([[1,10,10,1], [10,10,20,20]]).reshape((2,4,1))
+    wordBB = _homographyBB(wordBB0.copy(), H)
+    wordBB0 = wordBB0[:,:,0]
+    wordBB = wordBB[:,:,0]
+    vec00 = wordBB0[:,3] - wordBB0[:,0]
+    vec01 = wordBB0[:,2] - wordBB0[:,1]
+    vec02 = wordBB0[:,1] - wordBB0[:,0]
+    vec03 = wordBB0[:,2] - wordBB0[:,3]
+    vec10 = wordBB[:,3] - wordBB[:,0]
+    vec11 = wordBB[:,2] - wordBB[:,1]
+    vec12 = wordBB[:,1] - wordBB[:,0]
+    vec13 = wordBB[:,2] - wordBB[:,3]
+    # I just check the vectors of corresponding pairs whether have the same orientation.
+    if np.dot(vec00, vec10) < 0 or np.dot(vec01, vec11) < 0 or np.dot(vec02, vec12) < 0 or np.dot(vec03, vec13) < 0:
+        clockwise = False
+    else:
+        clockwise = True
+    return clockwise
+ 
 def rescale_frontoparallel(p_fp,box_fp,p_im):
     """
     The fronto-parallel image region is rescaled to bring it in 
@@ -215,7 +291,9 @@ def get_text_placement_mask(xyz,mask,plane,pad=2,viz=False):
     REGION : DICT output of TextRegions.get_regions
     PAD : number of pixels to pad the placement-mask by
     """
-    _, contour, hier = cv2.findContours(mask.copy().astype('uint8'), mode=cv2.RETR_CCOMP, method=cv2.CHAIN_APPROX_SIMPLE)
+    contour,hier = cv2.findContours(mask.copy().astype('uint8'),
+                                    mode=cv2.RETR_CCOMP,
+                                    method=cv2.CHAIN_APPROX_SIMPLE)
     contour = [np.squeeze(c).astype('float') for c in contour]
     #plane = np.array([plane[1],plane[0],plane[2],plane[3]])
     H,W = mask.shape[:2]
@@ -224,7 +302,7 @@ def get_text_placement_mask(xyz,mask,plane,pad=2,viz=False):
     pts,pts_fp = [],[]
     center = np.array([W,H])/2
     n_front = np.array([0.0,0.0,-1.0])
-    for i in xrange(len(contour)):
+    for i in range(len(contour)):
         cnt_ij = contour[i]
         xyz = su.DepthCamera.plane2xyz(center, cnt_ij, plane)
         R = su.rot3d(plane[:3],n_front)
@@ -235,7 +313,9 @@ def get_text_placement_mask(xyz,mask,plane,pad=2,viz=False):
     # unrotate in 2D plane:
     rect = cv2.minAreaRect(pts_fp[0].copy().astype('float32'))
     box = np.array(cv2.boxPoints(rect))
+    box,_,_ = create_recognition_dataset.order_points(box)
     R2d = su.unrotate2d(box.copy())
+    #print(np.degrees(np.arccos(R2d[0][0])))
     box = np.vstack([box,box[0,:]]) #close the box for visualization
 
     mu = np.median(pts_fp[0],axis=0)
@@ -246,7 +326,7 @@ def get_text_placement_mask(xyz,mask,plane,pad=2,viz=False):
     # the same scale as the target region:
     s = rescale_frontoparallel(pts_tmp,boxR,pts[0])
     boxR *= s
-    for i in xrange(len(pts_fp)):
+    for i in range(len(pts_fp)):
         pts_fp[i] = s*((pts_fp[i]-mu[None,:]).dot(R2d.T) + mu[None,:])
 
     # paint the unrotated contour points:
@@ -256,7 +336,7 @@ def get_text_placement_mask(xyz,mask,plane,pad=2,viz=False):
 
     place_mask = 255*np.ones((int(np.ceil(COL))+pad, int(np.ceil(ROW))+pad), 'uint8')
 
-    pts_fp_i32 = [(pts_fp[i]+minxy[None,:]).astype('int32') for i in xrange(len(pts_fp))]
+    pts_fp_i32 = [(pts_fp[i]+minxy[None,:]).astype('int32') for i in range(len(pts_fp))]
     cv2.drawContours(place_mask,pts_fp_i32,-1,0,
                      thickness=cv2.FILLED,
                      lineType=8,hierarchy=hier)
@@ -277,8 +357,8 @@ def get_text_placement_mask(xyz,mask,plane,pad=2,viz=False):
         plt.imshow(mask)
         plt.subplot(1,2,2)
         plt.imshow(~place_mask)
-        plt.hold(True)
-        for i in xrange(len(pts_fp_i32)):
+        
+        for i in range(len(pts_fp_i32)):
             plt.scatter(pts_fp_i32[i][:,0],pts_fp_i32[i][:,1],
                         edgecolors='none',facecolor='g',alpha=0.5)
         plt.show()
@@ -307,16 +387,16 @@ def viz_masks(fignum,rgb,seg,depth,label):
         rgb_rand = (255*np.random.rand(3)).astype('uint8')
         img[mask] = rgb_rand[None,None,:] 
 
-    #import scipy
-    # scipy.misc.imsave('seg.png', mim)
-    # scipy.misc.imsave('depth.png', depth)
-    # scipy.misc.imsave('txt.png', rgb)
-    # scipy.misc.imsave('reg.png', img)
+    """    import imageio
+    imageio.imwrite('seg.png', mim)
+    imageio.imwrite('depth.png', depth)
+    imageio.imwrite('txt.png', rgb)
+    imageio.imwrite('reg.png', img)"""
 
     plt.close(fignum)
     plt.figure(fignum)
     ims = [rgb,mim,depth,img]
-    for i in xrange(len(ims)):
+    for i in range(len(ims)):
         plt.subplot(2,2,i+1)
         plt.imshow(ims[i])
     plt.show(block=False)
@@ -347,12 +427,12 @@ def viz_textbb(fignum,text_im, bb_list,alpha=1.0):
     plt.close(fignum)
     plt.figure(fignum)
     plt.imshow(text_im)
-    plt.hold(True)
+    
     H,W = text_im.shape[:2]
-    for i in xrange(len(bb_list)):
+    for i in range(len(bb_list)):
         bbs = bb_list[i]
         ni = bbs.shape[-1]
-        for j in xrange(ni):
+        for j in range(ni):
             bb = bbs[:,:,j]
             bb = np.c_[bb,bb[:,0]]
             plt.plot(bb[0,:], bb[1,:], 'r', linewidth=2, alpha=alpha)
@@ -361,19 +441,20 @@ def viz_textbb(fignum,text_im, bb_list,alpha=1.0):
     plt.show(block=False)
 
 class RendererV3(object):
-
+    
     def __init__(self, data_dir, max_time=None):
         self.text_renderer = tu.RenderFont(data_dir)
         self.colorizer = Colorize(data_dir)
         #self.colorizerV2 = colorV2.Colorize(data_dir)
 
-        self.min_char_height = 8 #px
-        self.min_asp_ratio = 0.4 #
+        self.min_char_height = 15 #px
+        self.min_asp_ratio = 0.7 #
 
         self.max_text_regions = 7
-
+        self.feather_prob = 0.1
         self.max_time = max_time
 
+    @wrap(entering, exiting)
     def filter_regions(self,regions,filt):
         """
         filt : boolean list of regions to keep.
@@ -390,10 +471,13 @@ class RendererV3(object):
             res = get_text_placement_mask(xyz,seg==l,regions['coeff'][idx],pad=2)
             if res is not None:
                 mask,H,Hinv = res
-                masks.append(mask)
-                Hs.append(H)
-                Hinvs.append(Hinv)
-                filt[idx] = True
+                if nice_homography(H) and nice_homography(Hinv): #in some regions flipped text is rendered. ref :##
+                    # https://github.com/ankush-me/SynthText/issues/121
+                    masks.append(mask)
+                    Hs.append(H)
+                    Hinvs.append(Hinv)
+                    filt[idx] = True
+            
         regions = self.filter_regions(regions,filt)
         regions['place_mask'] = masks
         regions['homography'] = Hs
@@ -401,11 +485,13 @@ class RendererV3(object):
 
         return regions
 
+    @wrap(entering, exiting)
     def warpHomography(self,src_mat,H,dst_size):
         dst_mat = cv2.warpPerspective(src_mat, H, dst_size,
                                       flags=cv2.WARP_INVERSE_MAP|cv2.INTER_LINEAR)
         return dst_mat
 
+    @wrap(entering, exiting)
     def homographyBB(self, bbs, H, offset=None):
         """
         Apply homography transform to bounding-boxes.
@@ -431,6 +517,7 @@ class RendererV3(object):
         bbs_h = np.reshape(bbs_h, (3,4,n), order='F')
         return bbs_h[:2,:,:]
 
+    @wrap(entering, exiting)
     def bb_filter(self,bb0,bb,text):
         """
         Ensure that bounding-boxes are not too distorted
@@ -448,13 +535,16 @@ class RendererV3(object):
         w = np.linalg.norm(bb[:,1,:] - bb[:,0,:], axis=0)
         hw = np.c_[h,w]
 
+        if np.sum(hw0[:, 1] == 0) > 0 or np.sum(hw[:, 1] == 0) > 0:
+            return False
+        
         # remove newlines and spaces:
-        text = ''.join(text.split())
-        assert len(text)==bb.shape[-1]
+       # text = ''.join(text.split())
+        #assert len(text)==bb.shape[-1]
 
-        alnum = np.array([ch.isalnum() for ch in text])
-        hw0 = hw0[alnum,:]
-        hw = hw[alnum,:]
+       # alnum = np.array([ch.isalnum() for ch in text])
+      #  hw0 = hw0[alnum,:]
+      #  hw = hw[alnum,:]
 
         min_h0, min_h = np.min(hw0[:,0]), np.min(hw[:,0])
         asp0, asp = hw0[:,0]/hw0[:,1], hw[:,0]/hw[:,1]
@@ -466,19 +556,19 @@ class RendererV3(object):
                     and asp_ratio < 1.0/self.min_asp_ratio)
         return is_good
 
-
+    @wrap(entering, exiting)
     def get_min_h(selg, bb, text):
         # find min-height:
         h = np.linalg.norm(bb[:,3,:] - bb[:,0,:], axis=0)
         # remove newlines and spaces:
         text = ''.join(text.split())
-        assert len(text)==bb.shape[-1]
+        #assert len(text)==bb.shape[-1]
 
-        alnum = np.array([ch.isalnum() for ch in text])
-        h = h[alnum]
+       # alnum = np.array([ch.isalnum() for ch in text])
+        #h = h[alnum]
         return np.min(h)
 
-
+    @wrap(entering, exiting)
     def feather(self, text_mask, min_h):
         # determine the gaussian-blur std:
         if min_h <= 15 :
@@ -492,40 +582,107 @@ class RendererV3(object):
             ksz = 5
         return cv2.GaussianBlur(text_mask,(ksz,ksz),bsz)
 
+    
+    
+
+    def char2wordBB(self, charBB, text):
+        """
+        Converts character bounding-boxes to word-level
+        bounding-boxes.
+        charBB : 2x4xn matrix of BB coordinates
+        text   : the text string
+        output : 2x4xm matrix of BB coordinates,
+                 where, m == number of words.
+        """
+        if len(charBB) == 1:
+            #sometimes charBB is actually wordBB. in that case return charBB as wordBB directly.
+            return  charBB
+        wrds = text.split()
+        bb_idx = np.r_[0, np.cumsum([len(w) for w in wrds])]
+        wordBB = np.zeros((2, 4, len(wrds)), 'float32')
+    
+        for i in range(len(wrds)):
+            cc = charBB[:, :, bb_idx[i]:bb_idx[i + 1]]
+        
+            # fit a rotated-rectangle:
+            # change shape from 2x4xn_i -> (4*n_i)x2
+            cc = np.squeeze(np.concatenate(np.dsplit(cc, cc.shape[-1]), axis=1)).T.astype('float32')
+            rect = cv2.minAreaRect(cc.copy())
+            box = np.array(cv2.boxPoints(rect))
+        
+            # find the permutation of box-coordinates which
+            # are "aligned" appropriately with the character-bb.
+            # (exhaustive search over all possible assignments):
+            cc_tblr = np.c_[cc[0, :],
+                            cc[-3, :],
+                            cc[-2, :],
+                            cc[3, :]].T
+            perm4 = np.array(list(itertools.permutations(np.arange(4))))
+            dists = []
+            for pidx in range(perm4.shape[0]):
+                d = np.sum(np.linalg.norm(box[perm4[pidx], :] - cc_tblr, axis=1))
+                dists.append(d)
+            wordBB[:, :, i] = box[perm4[np.argmin(dists)], :].T
+    
+        return wordBB
+    
+    @wrap(entering, exiting)
     def place_text(self,rgb,collision_mask,H,Hinv):
         font = self.text_renderer.font_state.sample()
         font = self.text_renderer.font_state.init_font(font)
-
+        
         render_res = self.text_renderer.render_sample(font,collision_mask)
         if render_res is None: # rendering not successful
             return #None
         else:
             text_mask,loc,bb,text = render_res
 
-        # update the collision mask with text:
-        collision_mask += (255 * (text_mask>0)).astype('uint8')
+        bb = self.homographyBB(bb, Hinv)
+        
+        xs, ys = np.where(text_mask)
+        
+        x1 = min(xs)
+        x2 =max(xs)
+        y1 = min(ys)
+        y2= max(ys)
+        
+        a = np.full_like(text_mask , 0)
+        for (x, y) , i in np.ndenumerate(text_mask):
+            if (x1<=x<x2 and y1<=y<=y2):
+                a[x, y] = 1
+       
+        collision_mask += (255 * (a==1)).astype('uint8')
 
-        # warp the object mask back onto the image:
-        text_mask_orig = text_mask.copy()
+        text_area_before_homography = np.sum(text_mask > 0)
         bb_orig = bb.copy()
         text_mask = self.warpHomography(text_mask,H,rgb.shape[:2][::-1])
-        bb = self.homographyBB(bb,Hinv)
-
+        #cv2.imwrite("text_mask.jpg", text_mask)
+        text_area_after_homography= np.sum(text_mask>0)
+        
+        ratio = text_area_before_homography/text_area_after_homography
+        
+        if ratio > 2.5:
+            # remove homographies/regions that distort text too much.
+            print("homography distortion is too large, filtering the region: {}".format(ratio))
+            return
+        
         if not self.bb_filter(bb_orig,bb,text):
             #warn("bad charBB statistics")
             return #None
 
         # get the minimum height of the character-BB:
         min_h = self.get_min_h(bb,text)
-
+        
         #feathering:
-        text_mask = self.feather(text_mask, min_h)
+        if random.uniform(0,1) <= self.feather_prob:
+            text_mask = self.feather(text_mask, min_h)
 
         im_final = self.colorizer.color(rgb,[text_mask],np.array([min_h]))
+        
+        text= text.split(" ")
+        return im_final, text, bb, collision_mask, [font.name]*len(text)
 
-        return im_final, text, bb, collision_mask
-
-
+    @wrap(entering, exiting)
     def get_num_text_regions(self, nregions):
         #return nregions
         nmax = min(self.max_text_regions, nregions)
@@ -535,47 +692,8 @@ class RendererV3(object):
             rnd = np.random.beta(5.0,1.0)
         return int(np.ceil(nmax * rnd))
 
-    def char2wordBB(self, charBB, text):
-        """
-        Converts character bounding-boxes to word-level
-        bounding-boxes.
-
-        charBB : 2x4xn matrix of BB coordinates
-        text   : the text string
-
-        output : 2x4xm matrix of BB coordinates,
-                 where, m == number of words.
-        """
-        wrds = text.split()
-        bb_idx = np.r_[0, np.cumsum([len(w) for w in wrds])]
-        wordBB = np.zeros((2,4,len(wrds)), 'float32')
         
-        for i in xrange(len(wrds)):
-            cc = charBB[:,:,bb_idx[i]:bb_idx[i+1]]
-
-            # fit a rotated-rectangle:
-            # change shape from 2x4xn_i -> (4*n_i)x2
-            cc = np.squeeze(np.concatenate(np.dsplit(cc,cc.shape[-1]),axis=1)).T.astype('float32')
-            rect = cv2.minAreaRect(cc.copy())
-            box = np.array(cv2.boxPoints(rect))
-
-            # find the permutation of box-coordinates which
-            # are "aligned" appropriately with the character-bb.
-            # (exhaustive search over all possible assignments):
-            cc_tblr = np.c_[cc[0,:],
-                            cc[-3,:],
-                            cc[-2,:],
-                            cc[3,:]].T
-            perm4 = np.array(list(itertools.permutations(np.arange(4))))
-            dists = []
-            for pidx in xrange(perm4.shape[0]):
-                d = np.sum(np.linalg.norm(box[perm4[pidx],:]-cc_tblr,axis=1))
-                dists.append(d)
-            wordBB[:,:,i] = box[perm4[np.argmin(dists)],:].T
-
-        return wordBB
-
-
+    @wrap(entering, exiting)
     def render_text(self,rgb,depth,seg,area,label,ninstance=1,viz=False):
         """
         rgb   : HxWx3 image rgb values (uint8)
@@ -604,18 +722,20 @@ class RendererV3(object):
             no suitable region for text placement, an empty list is returned.
         """
         try:
+            
             # depth -> xyz
             xyz = su.DepthCamera.depth2xyz(depth)
             
             # find text-regions:
-            regions = TextRegions.get_regions(xyz,seg,area,label)
+            regions = TextRegions.get_regions(rgb,xyz,seg,area,label)
 
             # find the placement mask and homographies:
             regions = self.filter_for_placement(xyz,seg,regions)
 
             # finally place some text:
             nregions = len(regions['place_mask'])
-            if nregions < 1: # no good region to place text on
+            if nregions < 1:
+                print("no good region found in image")# no good region to place text on
                 return []
         except:
             # failure in pre-text placement
@@ -624,12 +744,12 @@ class RendererV3(object):
             return []
 
         res = []
-        for i in xrange(ninstance):
+        for i in range(ninstance):
             place_masks = copy.deepcopy(regions['place_mask'])
 
-            print colorize(Color.CYAN, " ** instance # : %d"%i)
+            print (colorize(Color.CYAN, " ** instance # : %d"%i))
 
-            idict = {'img':[], 'charBB':None, 'wordBB':None, 'txt':None}
+            idict = {'img':[], 'charBB':None, 'wordBB':None, 'txt':None , 'font': None}
 
             m = self.get_num_text_regions(nregions)#np.arange(nregions)#min(nregions, 5*ninstance*self.max_text_regions))
             reg_idx = np.arange(min(2*m,nregions))
@@ -640,12 +760,14 @@ class RendererV3(object):
             img = rgb.copy()
             itext = []
             ibb = []
+            ifont=[]
 
             # process regions: 
             num_txt_regions = len(reg_idx)
-            NUM_REP = 5 # re-use each region three times:
+            NUM_REP = 3 # re-use each region three times:
             reg_range = np.arange(NUM_REP * num_txt_regions) % num_txt_regions
             for idx in reg_range:
+                
                 ireg = reg_idx[idx]
                 try:
                     if self.max_time is None:
@@ -657,8 +779,8 @@ class RendererV3(object):
                             txt_render_res = self.place_text(img,place_masks[ireg],
                                                              regions['homography'][ireg],
                                                              regions['homography_inv'][ireg])
-                except TimeoutException, msg:
-                    print msg
+                except TimeoutException as msg:
+                    print (msg)
                     continue
                 except:
                     traceback.print_exc()
@@ -667,11 +789,12 @@ class RendererV3(object):
 
                 if txt_render_res is not None:
                     placed = True
-                    img,text,bb,collision_mask = txt_render_res
+                    img,text,bb,collision_mask, font= txt_render_res
                     # update the region collision mask:
                     place_masks[ireg] = collision_mask
                     # store the result:
-                    itext.append(text)
+                    itext.extend(text)
+                    ifont.extend(font)
                     ibb.append(bb)
 
             if  placed:
@@ -679,12 +802,13 @@ class RendererV3(object):
                 idict['img'] = img
                 idict['txt'] = itext
                 idict['charBB'] = np.concatenate(ibb, axis=2)
-                idict['wordBB'] = self.char2wordBB(idict['charBB'].copy(), ' '.join(itext))
+                idict['wordBB'] = idict['charBB']
+                idict['font']=ifont
                 res.append(idict.copy())
                 if viz:
                     viz_textbb(1,img, [idict['wordBB']], alpha=1.0)
                     viz_masks(2,img,seg,depth,regions['label'])
                     # viz_regions(rgb.copy(),xyz,seg,regions['coeff'],regions['label'])
                     if i < ninstance-1:
-                        raw_input(colorize(Color.BLUE,'continue?',True))                    
+                        input(colorize(Color.BLUE,'continue?',True))
         return res
