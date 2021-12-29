@@ -123,7 +123,7 @@ def main(data_path,depth_dir, img_dir, gt_file_name,out_dir,  viz=False):
 	start_idx, end_idx = 0, min(NUM_IMG, N)
 	
 	RV3 = RendererV3(data_path, max_time=SECS_PER_IMG)
-	gt_file = open("{}/{}".format(out_dir,gt_file_name), "w")
+	gt_file = open("{}/{}".format(out_dir,gt_file_name), "a")
 	range_list= list(range(start_idx, end_idx))
 	random.shuffle(range_list)
 	
