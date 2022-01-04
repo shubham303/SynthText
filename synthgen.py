@@ -652,19 +652,10 @@ class RendererV3(object):
                 a[x, y] = 1
        
         collision_mask += (255 * (a==1)).astype('uint8')
-
-        text_area_before_homography = np.sum(text_mask > 0)
         bb_orig = bb.copy()
         text_mask = self.warpHomography(text_mask,H,rgb.shape[:2][::-1])
         #cv2.imwrite("text_mask.jpg", text_mask)
-        text_area_after_homography= np.sum(text_mask>0)
         
-        ratio = text_area_before_homography/text_area_after_homography
-        
-        if ratio > 2.5:
-            # remove homographies/regions that distort text too much.
-            print("homography distortion is too large, filtering the region: {}".format(ratio))
-            return
         
         if not self.bb_filter(bb_orig,bb,text):
             #warn("bad charBB statistics")
