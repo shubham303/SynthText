@@ -190,9 +190,9 @@ def create_recognition_dataset_warped_unwarped(input_path, output_path, gt_file)
                 img_path = os.path.join(input_path, img_name)
                 
                 
-                file = open(img_path)
-                img= jpeg_reader.decode(file.read(), 1)
-                #img = cv2.imread(img_path)
+                #file = open(img_path)
+                #img= jpeg_reader.decode(file.read(), 1)
+                img = cv2.imread(img_path)
     
                 word_bb = word_bb.split(",")
                 word_bb = np.array([int(float(bb)) for bb in word_bb]).reshape((4, 2))
