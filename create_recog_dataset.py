@@ -230,7 +230,7 @@ def create_recognition_dataset_warped_unwarped(input_path, output_path, gt_file)
 				if curr_img is None or img_path != curr_img_path:
 					img = cv2.imread(img_path)
 					curr_img = img
-					curr_img_path=curr_img_path
+					curr_img_path=img_path
 				else:
 					img = curr_img
 				#img = cv2.imread(img_path)
