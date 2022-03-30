@@ -212,12 +212,14 @@ def create_recognition_dataset_warped_unwarped(input_path, output_path, gt_file)
 		env = lmdb.open(output_path, map_size=1099511627776)
 		cache = {}
 		cnt = 1
-		
+		keys.sort()
+		curr_img= None
+		curr_img_path = None
 		for i in range(len(keys)):
 			key= keys[i]
 			
-			if  i%10000 ==0 :
-				images = load_images(i,keys,input_path)
+			#if  i%10000 ==0 :
+			#	images = load_images(i,keys,input_path)
 			
 			try:
 				img_path, word_bb, text, font = key.split("\t")
@@ -225,8 +227,12 @@ def create_recognition_dataset_warped_unwarped(input_path, output_path, gt_file)
 				img_name = os.path.basename(img_path)
 				img_path = os.path.join(input_path, img_name)
 				
+				if curr_img is None or img_path != curr_img_path:
+					img = cv2.imread(img_path)
+				else:
+					img = curr_img
 				#img = cv2.imread(img_path)
-				img = images[img_path]
+				#img = images[img_path]
 				
 				word_bb = word_bb.split(",")
 				word_bb = np.array([int(float(bb)) for bb in word_bb]).reshape((4, 2))
