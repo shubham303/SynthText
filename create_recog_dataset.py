@@ -170,6 +170,7 @@ def load_images(index, keys, input_path):
 	for i in range(index,index+min(1000, len(keys))):
 		key= keys[i]
 		pool.apply_async(load_image, args=(key, input_path),callback=add_img)
+	print("async started")
 	pool.close()
 	pool.join()
 	print("1000 done")
