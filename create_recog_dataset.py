@@ -166,10 +166,18 @@ images=dict()
 
 def load_images(index, keys, input_path):
 	pool = mp.Pool(mp.cpu_count())
-	print(mp.cpu_count())
-	for i in range(index,index+min(10000, len(keys))):
+	prev_img = ""
+	cnt =0
+	print("fds")
+	for i in range(index,len(keys)):
 		key= keys[i]
-		pool.apply_async(load_image, args=(key, input_path),callback=add_img)
+		img_path, word_bb, text, font = key.split("\t")
+		if prev_img != img_path:
+			pool.apply_async(load_image, args=(key, input_path),callback=add_img)
+			prev_img = img_path
+			cnt+=1
+		if cnt==1000:
+			break
 	pool.close()
 	pool.join()
 	return images
@@ -198,7 +206,7 @@ def create_recognition_dataset_warped_unwarped(input_path, output_path, gt_file)
 	random.shuffle(lines)
 	train_keys = lines[0: (int)(0.9 * len(lines))]
 	val_keys = lines[(int)(0.9 * len(lines)):]
-	
+	print(len(train_keys), len(val_keys))
 	print("Done")
 	
 	##### TRAINING DATASET #####
@@ -208,7 +216,7 @@ def create_recognition_dataset_warped_unwarped(input_path, output_path, gt_file)
 
 	
 	for keys, output_path in [(train_keys, train_output_path), (val_keys, val_output_path)]:
-		
+		global images
 		env = lmdb.open(output_path, map_size=1099511627776)
 		cache = {}
 		cnt = 1
@@ -218,23 +226,17 @@ def create_recognition_dataset_warped_unwarped(input_path, output_path, gt_file)
 		for i in range(len(keys)):
 			key= keys[i]
 			
-			#if  i%10000 ==0 :
-			#	images = load_images(i,keys,input_path)
-			
 			try:
 				img_path, word_bb, text, font = key.split("\t")
 				
 				img_name = os.path.basename(img_path)
 				img_path = os.path.join(input_path, img_name)
 				
-				if curr_img is None or img_path != curr_img_path:
-					img = cv2.imread(img_path)
-					curr_img = img
-					curr_img_path=img_path
-				else:
-					img = curr_img
-				#img = cv2.imread(img_path)
-				#img = images[img_path]
+				
+				if img_path not in  images:
+					images =  load_images(i,keys,input_path)
+						
+				img = images[img_path]
 				
 				word_bb = word_bb.split(",")
 				word_bb = np.array([int(float(bb)) for bb in word_bb]).reshape((4, 2))
