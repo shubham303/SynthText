@@ -56,3 +56,6 @@ range['AR'] = [
 range['ENG'] = [
 {"from": '!', "to": "}"}
 ]
+
+
+delta=[]

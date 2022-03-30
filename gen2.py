@@ -24,14 +24,14 @@ from synthgen import *
 
 ## Define some configuration variables:
 NUM_IMG = -1  # no. of images to use for generation (-1 to use all available):
-INSTANCE_PER_IMAGE = 10  # no. of times to use the same image
-SECS_PER_IMG = 5
+INSTANCE_PER_IMAGE = 1  # no. of times to use the same image
+SECS_PER_IMG = 500
 
 # path to the data-file, containing image, depth and segmentation:
 
 # url of the data (google-drive public file):
 DATA_URL = 'http://www.robots.ox.ac.uk/~ankush/data.tar.gz'
-OUT_FILE = './SynthText_{}.h5'.format(configuration.lang)
+OUT_FILE = './SynthText_{}.h5'.format("HI")
 
 
 def get_data(data_path):
@@ -125,11 +125,14 @@ def main(data_path,depth_dir, img_dir, gt_file_name,out_dir,  viz=False):
 	RV3 = RendererV3(data_path, max_time=SECS_PER_IMG)
 	gt_file = open("{}/{}".format(out_dir,gt_file_name), "w")
 	range_list= list(range(start_idx, end_idx))
-	random.shuffle(range_list)
+	#random.shuffle(range_list)
 	
 	for i in range(start_idx, end_idx):
 
 		imname = imnames[range_list[i]].strip()
+		
+		#if "26989" not in imname:
+		#	continue
 		try:
 			# get the image:
 			# img = Image.fromarray(db['image'][imname][:])
@@ -156,11 +159,12 @@ def main(data_path,depth_dir, img_dir, gt_file_name,out_dir,  viz=False):
 			label = seg_db["mask"][imname].attrs['label']
 			
 			# re-size uniformly:
-			#sz = depth.shape[:2][::-1]
+			sz = depth.shape[:2][::-1]
 			#img = np.array(img.resize(sz, Image.ANTIALIAS))
-			#seg = np.array(Image.fromarray(seg).resize(sz, Image.NEAREST))
+			seg = np.array(Image.fromarray(seg).resize(sz, Image.NEAREST))
 			from utils import io
 			#io.write_segm_img("seg.jpg", img, seg, alpha=0.5)
+			#cv2.imwrite("img.jpg", cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
 			#io.write_depth('depth', depth)
 			# get_segmentation_crop(img, seg, label)
 			
@@ -169,7 +173,7 @@ def main(data_path,depth_dir, img_dir, gt_file_name,out_dir,  viz=False):
 			                      ninstance=INSTANCE_PER_IMAGE, viz=viz)
 			if len(res) > 0:
 				# non-empty : successful in placing text:
-				# add_res_to_db(imname, res, out_db)
+				#add_res_to_db(imname, res, out_db)
 				save_res_to_imgs("{}_{}".format(gt_file_name[0:gt_file_name.find(".")],i), res, gt_file, out_dir)
 				gt_file.flush()
 				
@@ -195,7 +199,7 @@ if __name__ == '__main__':
 	                    help='Select language : ENG/HI')
 	
 	parser.add_argument("--data_path", default="data/")
-	parser.add_argument('--text_source', default='newsgroup/newsgroup.txt', help="text_source")
+	parser.add_argument('--text_source', default='newsgroup/rand_text/newsgroup.txt', help="text_source")
 	parser.add_argument("--image_dir", default="./", help="path to images")
 	parser.add_argument("--depth_dir", default="./", help="path to depth map and seg map")
 	parser.add_argument("--gt_file", default="gt.txt", help="path to output gt file")

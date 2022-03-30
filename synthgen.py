@@ -448,7 +448,7 @@ class RendererV3(object):
         #self.colorizerV2 = colorV2.Colorize(data_dir)
 
         self.min_char_height = 15 #px
-        self.min_asp_ratio = 0.7 #
+        self.min_asp_ratio = 0.3 #
 
         self.max_text_regions = 7
         self.feather_prob = 0.1
@@ -638,7 +638,9 @@ class RendererV3(object):
             text_mask,loc,bb,text = render_res
 
         bb = self.homographyBB(bb, Hinv)
+        #char_bb= self.homographyBB(char_bb, Hinv)
         
+        """
         xs, ys = np.where(text_mask)
         
         x1 = min(xs)
@@ -650,9 +652,11 @@ class RendererV3(object):
         for (x, y) , i in np.ndenumerate(text_mask):
             if (x1<=x<x2 and y1<=y<=y2):
                 a[x, y] = 1
-       
+        
         collision_mask += (255 * (a==1)).astype('uint8')
-
+        """
+    
+        collision_mask += (255 * (text_mask > 0)).astype('uint8')
         text_area_before_homography = np.sum(text_mask > 0)
         bb_orig = bb.copy()
         text_mask = self.warpHomography(text_mask,H,rgb.shape[:2][::-1])
@@ -761,7 +765,8 @@ class RendererV3(object):
             itext = []
             ibb = []
             ifont=[]
-
+            ibb_char=[]
+            
             # process regions: 
             num_txt_regions = len(reg_idx)
             NUM_REP = 3 # re-use each region three times:
@@ -789,7 +794,7 @@ class RendererV3(object):
 
                 if txt_render_res is not None:
                     placed = True
-                    img,text,bb,collision_mask, font= txt_render_res
+                    img,text,bb, collision_mask, font= txt_render_res
                     # update the region collision mask:
                     place_masks[ireg] = collision_mask
                     # store the result:
@@ -802,9 +807,11 @@ class RendererV3(object):
                 idict['img'] = img
                 idict['txt'] = itext
                 idict['charBB'] = np.concatenate(ibb, axis=2)
-                idict['wordBB'] = idict['charBB']
+                idict['wordBB'] = np.concatenate(ibb, axis=2) #self.char2wordBB(idict['charBB'].copy(), ' '.join(itext))
                 idict['font']=ifont
+                idict['delta'] = configuration.delta
                 res.append(idict.copy())
+                
                 if viz:
                     viz_textbb(1,img, [idict['wordBB']], alpha=1.0)
                     viz_masks(2,img,seg,depth,regions['label'])

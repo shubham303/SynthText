@@ -29,3 +29,6 @@ gt.txt
 .idea/.gitignore
 .idea/inspectionProfiles/Project_Default.xml
 .idea/vcs.xml
+
+
+*.h5

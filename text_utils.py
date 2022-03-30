@@ -40,7 +40,7 @@ ft = qah.get_ft_lib()
 # from fribidi import     FRIBIDI as FB
 import harfbuzz as hb
 from array import array
-
+from indicnlp.abnf import abfn
 
 try:
     nltk.data.find('tokenizers/punkt')
@@ -127,7 +127,7 @@ def get_Bound_Glyph(abc, buf, hb_font, ft_face, text_size):
                      )
     
     # Getting the bound of the [glyphs]
-    figure_bounds = math.ceil(glyph_extents.bounds)
+    figure_bounds = round(glyph_extents.bounds)
     
     # Returning glyph and the figure bound
     return (figure_bounds, glyphs)
@@ -308,9 +308,9 @@ class RenderFont(object):
     def __init__(self, data_dir='data'):
         # distribution over the type of text:
         # whether to get a single word, paragraph or a line:
-        self.p_text = {0.5 : 'WORD',
-                       0.2 : 'LINE',
-                       0.3 : 'PARA'}
+        self.p_text = {0.96 : 'WORD',
+                       0.03 : 'LINE',
+                       0.01 : 'PARA'}
 
         ## TEXT PLACEMENT PARAMETERS:
         self.f_shrink = 0.90
@@ -333,11 +333,11 @@ class RenderFont(object):
 
         # get font-state object:
         self.font_state = FontState(data_dir)
-
+        self.A = abfn.ABFN()
         pygame.init()
 
     @wrap(entering, exiting)
-    def render_multiline(self, font, text):
+    def render_multiline1(self, font, text):
         """
 		renders multiline TEXT on the pygame surface SURF with the
 		font style FONT.
@@ -346,6 +346,11 @@ class RenderFont(object):
 		returns the updated surface, words and the character bounding boxes.
 		"""
         # Adding Custom Code here by removing the Orginal Code
+    
+        # ABNF tokenization
+      
+        A= abfn.ABFN()
+        
     
         # get the number of lines
         lines = text.split('\n')
@@ -401,7 +406,9 @@ class RenderFont(object):
         factor = 0
         y = 0
         bb = []
-    
+        char_bb=[]
+        bb_delta=[]
+        
         ## The recent addtion code. feb 19,2019
         ## Project make faster.
         ## No need for the word wise bounding box. So, now they can be eliminated.
@@ -425,25 +432,58 @@ class RenderFont(object):
             y += (line_spacing * 0.8)  # line-feed
         
             words = l.split()
-        
-            for w in words:
-                st_bound, glyph_3 = get_Bound_Glyph(w, buf, hb_font, ft_face, text_size)
-                shift = shiftFactor * (st_bound.topleft)[0] + shiftAdditional
-
-                char_in_w = len(w)
-                
-                bb.append(np.array([x+shift ,y + (st_bound.topleft)[1], st_bound.width, st_bound.height]))
-
-    
+            words = list(filter(lambda x :  A.is_valid_label(x) , words))
             
+            for word in words:
+                
+                tokens = A.tokenize(word)
+                orig_x =x
+                orig_y = y
+                char_bb_per_word=[]
+                total_width=0
+                s=0
+                for w in tokens:
+                    st_bound, glyph_3 = get_Bound_Glyph(w, buf, hb_font, ft_face, text_size)
+                    shift = shiftFactor * (st_bound.topleft)[0] + shiftAdditional
+                    #shift = st_bound.topleft
+                    #char_in_w = len(w)
+                    
+                    bb.append(np.array([x +shift,y + (st_bound.topleft)[1], st_bound.width,
+                                        st_bound.height]))
+
+                    x=x + st_bound.width + shift
+                    total_width += st_bound.width
+                    
+                    if s==0:
+                        s=shift
+                #char_bb.append( np.array(char_bb_per_word))
+                x = orig_x
+                st_bound, glyph_3 = get_Bound_Glyph(word, buf, hb_font, ft_face, text_size)
+                shift = shiftFactor * (st_bound.topleft)[0] + shiftAdditional
+                if s!=shift:
+                    print(s, shift)
+                #bb.append(np.array([x + shift, y + (st_bound.topleft)[1], st_bound.width, st_bound.height]))
+                print("total : {} st_boudn : {}  tokens={} text={}".format(total_width, st_bound.width, len(tokens) ,
+                                                                           word))
+                if len(tokens)> 1:
+                    delta = (total_width - st_bound.width)/(len(tokens)-1)
+                else:
+                    delta=0
+                
+                for i in range(len(bb)):
+                    if i!=len(bb)-1:
+                        bb[i][2]-=delta
+                    if i!=0:
+                        bb[i][0]-=delta
+
                 ## now since we have generated fake bounding box,
                 ## next task will be to render glyphs on the actual surface.
-            
+
                 ## Remember context is a pen for us.
                 ## Go to the point from where you want to write.
-                #bb.append(np.array([x+shift,y + (st_bound.topleft)[1], st_bound.width,st_bound.height])  )
+                # bb.append(np.array([x+shift,y + (st_bound.topleft)[1], st_bound.width,st_bound.height])  )
                 ctx.translate(Vector(x + shift, y))
-            
+
                 # setting the color that we wish to use.
                 ctx.set_source_colour(Colour.grey(1))
                 # setting the font_face
@@ -452,43 +492,245 @@ class RenderFont(object):
                 ctx.set_font_size(text_size)
                 # rendering the glyphs on the surface.
                 ctx.show_glyphs(glyph_3)
-            
+
                 ## translate back to the original position.
                 ctx.translate(Vector(-(x + shift), -y))
-            
+
                 ## Shift the x to new position.
                 x = x + st_bound.width + shift + spaceWidth
+                #x = x+ spaceWidth
+                        ## resetting the shift.
+
+        if len(bb) >0:
+            img = pngB_to_np(pix.to_png_bytes())
+    
+            # dicc= {}
+            # dicc['img'] = img[:,:,1]
+            # dicc['bb'] = bb
+        
+            Simg = img[:, :, 1]
+        
+            # self.ii = self.ii+1
+            # bb = dicc['bb']
+            bb = np.array(bb)
+            
+            # Simg = Simg.astype(np.uint8)
+            # Simg = Simg[:,:,1]
+            Simg = Simg.swapaxes(0, 1)
+        
+            # get the words:
+            words = ' '.join(text.split())
+    
+            r0 = pygame.Rect(bb[0])
+            rect_union = r0.unionall(bb)
+        
+            surf_arr, bbs = crop_safe(Simg, rect_union, bb, pad=5)
+            surf_arr = surf_arr.swapaxes(0, 1)
+            self.visualize_bb(surf_arr,bbs)
+    
+            bbs = self.bb_xywh2coords(bbs)
+            configuration.delta = bb_delta
+            return surf_arr, words, bbs
+        else:
+            return None, None, None
+
+    def render_multiline(self, font, text):
+        """
+        renders multiline TEXT on the pygame surface SURF with the
+        font style FONT.
+        A new line in text is denoted by \n, no other characters are
+        escaped. Other forms of white-spaces should be converted to space.
+        returns the updated surface, words and the character bounding boxes.
+        """
+        # Adding Custom Code here by removing the Orginal Code
+
+        # ABNF tokenization
+
+        A = abfn.ABFN()
+
+        # get the number of lines
+        lines = text.split('\n')
+        lengths = [len(l) for l in lines]
+
+        # font parameters:
+        line_spacing = font.get_sized_height() + 1
+
+        # initialize the surface to proper size:
+        line_bounds = font.get_rect(lines[np.argmax(lengths)])
+        fsize = (round(2.0 * line_bounds.width), round(1.25 * line_spacing * len(lines)))
+        # surf = pygame.Surface(fsize, pygame.locals.SRCALPHA, 32)
+        space = font.get_rect('O')
+        spaceWidth = space.width * 0.85  ## 0.8 has been multiplied here
+        surfx, surfy = fsize
+        font_path = font.path
+        font_size = font.size
+
+        # lines = di['lines']
+        fsize = Vector(int(surfx + space.width), int(surfy + line_spacing))
+        # line_spacing = di['line_spacing']
+
+        pix = qah.ImageSurface.create(
+            format=CAIRO.FORMAT_RGB24,
+            dimensions=fsize
+        )
+
+        # Creating ft_face
+        ft_face = ft.new_face(font_path)
+        text_size = font_size
+        # Creating Buffer
+        buf = hb.Buffer.create()
+        # setting char size to font face
+        ft_face.set_char_size(size=text_size, resolution=qah.base_dpi)
+        # ft_face.underline = font.underline
+        hb_font = hb.Font.ft_create(ft_face)
+        qah_face = qah.FontFace.create_for_ft_face(ft_face)
+
+        ctx = qah.Context.create(pix)
+        # ctx.set_source_colour(Colour.grey(0))
+        # ctx.paint()
+        ctx.set_source_colour(Colour.grey(1))
+        ctx.set_font_face(qah_face)
+        ctx.set_font_size(text_size)
+
+        # Start Replacing Code from here
+
+        ## for the purpose of shifting in horizontal direction.
+        shiftAdditional = 0
+        # By What factor shifting should be done
+        shiftFactor = 1.0
+        shiftFactor_y = 1.2
+        factor = 0
+        y = 0
+        bb = []
+        char_bb = []
+        bb_delta = []
+
+        ## The recent addtion code. feb 19,2019
+        ## Project make faster.
+        ## No need for the word wise bounding box. So, now they can be eliminated.
+
+        '''
+            The procedure is as follow.
+            - Since we do not require individual character bounding box,
+            we will discard that functionality.
+            - We will place a word and create fake bounding box for it.
+            - right from the top left.
+            - width of the bounding box will be simply ((width of word)/total bounding box)
+        '''
+
+        ## Ends here feb 19,2019
+
+        for l in lines:  # picking up a line.
+    
+            l = l.split(" ")
+            l = " ".join(l)
+            x = spaceWidth * 0.7  # carriage-return
+            y += (line_spacing * 0.8)  # line-feed
+    
+            words = l.split()
+            words = list(filter(lambda x: A.is_valid_label(x), words))
+    
+            for word in words:
+        
+                tokens = A.tokenize(word)
+                orig_x = x
+                orig_y = y
+                char_bb_per_word = []
+                total_width = 0
+               
+                for w in tokens:
+                    st_bound, glyph_3 = get_Bound_Glyph(w, buf, hb_font, ft_face, text_size)
+                    shift = shiftFactor * (st_bound.topleft)[0] + shiftAdditional
+                    shift_y = shiftFactor_y* (st_bound.topleft)[1] + shiftAdditional
+                    # shift = st_bound.topleft
+                    # char_in_w = len(w)
+            
+                    bb.append(np.array([x + shift, y +shift_y, st_bound.width,
+                                        st_bound.height]))
+
+                    # bb.append(np.array([x+shift,y + (st_bound.topleft)[1], st_bound.width,st_bound.height])  )
+                    ctx.translate(Vector(x + shift, y))
+
+                    # setting the color that we wish to use.
+                    ctx.set_source_colour(Colour.grey(1))
+                    # setting the font_face
+                    ctx.set_font_face(qah_face)
+                    # defining the size.
+                    ctx.set_font_size(text_size)
+                    # rendering the glyphs on the surface.
+                    ctx.show_glyphs(glyph_3)
+
+                    ## translate back to the original position.
+                    ctx.translate(Vector(-(x + shift), -y))
+                    
+                    
+                    x = x + st_bound.width + shift
+                    total_width += st_bound.width
+            
+                  
+                # char_bb.append( np.array(char_bb_per_word))
+                x = orig_x
+                st_bound, glyph_3 = get_Bound_Glyph(word, buf, hb_font, ft_face, text_size)
+                shift = shiftFactor * (st_bound.topleft)[0] + shiftAdditional
+               
+                # bb.append(np.array([x + shift, y + (st_bound.topleft)[1], st_bound.width, st_bound.height]))
+                print("total : {} st_boudn : {}  tokens={} text={}".format(total_width, st_bound.width, len(tokens),
+                                                                           word))
+                if len(tokens) > 1:
+                    delta = (total_width - st_bound.width) / (len(tokens) - 1)
+                else:
+                    delta = 0
+        
+                for i in range(len(bb)):
+                    if i != len(bb) - 1:
+                        bb[i][2] -= delta
+                    if i != 0:
+                        bb[i][0] -= delta
+        
+                ## now since we have generated fake bounding box,
+                ## next task will be to render glyphs on the actual surface.
+        
+                ## Remember context is a pen for us.
+                ## Go to the point from where you want to write.
+               
+        
+                ## Shift the x to new position.
+                x = x + st_bound.width + shift + spaceWidth
+                # x = x+ spaceWidth
                 ## resetting the shift.
 
-
-        img = pngB_to_np(pix.to_png_bytes())
-
-        # dicc= {}
-        # dicc['img'] = img[:,:,1]
-        # dicc['bb'] = bb
+        if len(bb) > 0:
+            img = pngB_to_np(pix.to_png_bytes())
     
-        Simg = img[:, :, 1]
+            # dicc= {}
+            # dicc['img'] = img[:,:,1]
+            # dicc['bb'] = bb
     
-        # self.ii = self.ii+1
-        # bb = dicc['bb']
-        bb = np.array(bb)
-        # Simg = Simg.astype(np.uint8)
-        # Simg = Simg[:,:,1]
-        Simg = Simg.swapaxes(0, 1)
+            Simg = img[:, :, 1]
     
-        # get the words:
-        words = ' '.join(text.split())
-
-        r0 = pygame.Rect(bb[0])
-        rect_union = r0.unionall(bb)
+            # self.ii = self.ii+1
+            # bb = dicc['bb']
+            bb = np.array(bb)
     
-        surf_arr, bbs = crop_safe(Simg, rect_union, bb, pad=5)
-        surf_arr = surf_arr.swapaxes(0, 1)
-        # self.visualize_bb(surf_arr,bbs)
-
-        bbs = self.bb_xywh2coords(bbs)
-        return surf_arr, words, bbs
+            # Simg = Simg.astype(np.uint8)
+            # Simg = Simg[:,:,1]
+            Simg = Simg.swapaxes(0, 1)
     
+            # get the words:
+            words = ' '.join(text.split())
+    
+            r0 = pygame.Rect(bb[0])
+            rect_union = r0.unionall(bb)
+    
+            surf_arr, bbs = crop_safe(Simg, rect_union, bb, pad=5)
+            surf_arr = surf_arr.swapaxes(0, 1)
+            self.visualize_bb(surf_arr, bbs)
+    
+            bbs = self.bb_xywh2coords(bbs)
+            configuration.delta = bb_delta
+            return surf_arr, words, bbs
+        else:
+            return None, None, None
     @wrap(entering, exiting)
     def render_curved(self, font, word_text):
         """
@@ -503,8 +745,8 @@ class RenderFont(object):
         isword = len(word_text.split()) == 1
     
         # do curved iff, the length of the word <= 10
-        if not isword or wl > 15 or np.random.rand() > self.p_curved:
-            return self.render_multiline(font, word_text)
+        #if not isword or wl > 15 or np.random.rand() > self.p_curved:
+        return self.render_multiline(font, word_text)
 
 
 
@@ -523,7 +765,6 @@ class RenderFont(object):
         pix = qah.ImageSurface.create(
             format=CAIRO.FORMAT_RGB24,
             dimensions=fsize
-    
         )
     
         # Creating ft_face
@@ -563,7 +804,7 @@ class RenderFont(object):
         ctx.show_glyphs(glyph_3)
     
         img = pngB_to_np(pix.to_png_bytes())
-    
+        
         curveIntensity = np.random.randint(-20, 20)
     
         img = transform_desire(img, curveIntensity)
@@ -714,8 +955,10 @@ class RenderFont(object):
             # sample text:
             text_type = sample_weighted(self.p_text)
             text = self.text_source.sample(nline,nchar,text_type)
-
-           
+            
+            
+            
+        
             
             if len(text)==0 or np.any([len(line)==0 for line in text]):
                 continue
@@ -733,7 +976,11 @@ class RenderFont(object):
 
             # render the text:
             txt_arr,txt, box = self.render_curved(font, text)
-
+            
+            if  txt_arr is None:
+                continue
+            
+            
            
             
             # make sure that the text-array is not bigger than mask array:
@@ -751,11 +998,11 @@ class RenderFont(object):
     @wrap(entering, exiting)
     def visualize_bb(self, text_arr, bbs):
         ta = text_arr.copy()
-        for r in bbs:
-            cv.rectangle(ta, (r[0],r[1]), (r[0]+r[2],r[1]+r[3]), color=128, thickness=1)
-        plt.imshow(ta,cmap='gray')
-        plt.show()
-
+        #for r in bbs:
+        #    cv.rectangle(ta, (r[0],r[1]), (r[0]+r[2],r[1]+r[3]), color=128, thickness=1)
+        #plt.imshow(ta,cmap='gray')
+       # plt.show()
+        cv2.imwrite("temp.jpg", text_arr)
 
 class FontState(object):
     """

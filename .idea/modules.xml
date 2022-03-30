@@ -3,6 +3,7 @@
   <component name="ProjectModuleManager">
     <modules>
       <module fileurl="file://$PROJECT_DIR$/.idea/SynthText.iml" filepath="$PROJECT_DIR$/.idea/SynthText.iml" />
+      <module fileurl="file://$PROJECT_DIR$/../../indic_nlp_library/.idea/indic_nlp_library.iml" filepath="$PROJECT_DIR$/../../indic_nlp_library/.idea/indic_nlp_library.iml" />
     </modules>
   </component>
 </project>

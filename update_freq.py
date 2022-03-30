@@ -29,7 +29,7 @@ import argparse
 parser = argparse.ArgumentParser(description='invert font size')
 parser.add_argument('--lang', default='ENG',
                     help='Select language : ENG/HI')
-parser.add_argument("--data_path", default="data/")
+parser.add_argument("--data_path", default="data")
 
 args = parser.parse_args()
 configuration.char_freq_path = 'models/{}/char_freq.cp'.format(args.lang)

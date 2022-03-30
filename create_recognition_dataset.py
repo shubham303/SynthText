@@ -12,6 +12,8 @@ import os.path
 import random
 
 import h5py
+
+import visualize_results
 from common import *
 from math import floor, ceil
 
@@ -202,8 +204,10 @@ def create_recognition_dataset_warped_unwarped(input_path, output_path, gt_file)
                     cache[labelKey] = text.encode()
                     cache[fontKey] = font.encode()
                     cnt+=1
+                    cv2.imwrite(os.path.join(output_path,"{}{}".format(text, str(imageKey)))+".jpg" , image)
             except Exception:
                 print("error occurred: continuing")
+                raise Exception
             if cnt % 10000 == 1:
                 writeCache(env, cache)
                 cache = {}
@@ -215,6 +219,29 @@ def create_recognition_dataset_warped_unwarped(input_path, output_path, gt_file)
         writeCache(env, cache)
         
         print("Done")
+
+
+def visualize_result(input_path, output_path, gt_file):
+    
+    print("Fetching Keys...")
+    lines = open(gt_file).readlines()
+    lines.sort()
+    curr_img = ""
+    word_bbs=[]
+    
+    for key in lines:
+        img_path, word_bb, text, font = key.split("\t")
+        if img_path == curr_img or curr_img =="":
+            word_bbs.append(word_bb)
+            curr_img = img_path
+        else:
+            img = cv2.imread(os.path.join(input_path,img_path[img_path.find("/")+1:]))
+            visualize_results.viz_textbb(img, None , word_bbs)
+            curr_img = img_path
+            word_bbs=[word_bb]
+    img = cv2.imread(curr_img)
+    if img :
+        visualize_results.viz_textbb(img, None, word_bbs)
         
 def create_recognition_dataset_warped_unwarped_combined(input_path, output_path):
     gt_file_path = os.path.join("gt.txt")
@@ -228,8 +255,8 @@ def create_recognition_dataset_warped_unwarped_combined(input_path, output_path)
             data = open(file).read()
             gt_file.write(data)
     gt_file.close()
-    create_recognition_dataset_warped_unwarped(input_path, output_path, gt_file_path)
-
+    #create_recognition_dataset_warped_unwarped(input_path, output_path, gt_file_path)
+    visualize_result(input_path, output_path,gt_file_path)
 
 
 if __name__ == '__main__':
