@@ -166,12 +166,13 @@ images=dict()
 
 def load_images(index, keys, input_path):
 	pool = mp.Pool(mp.cpu_count())
-
+	print(mp.cpu_count())
 	for i in range(index,index+min(1000, len(keys))):
 		key= keys[i]
 		pool.apply_async(load_image, args=(key, input_path),callback=add_img)
 	pool.close()
 	pool.join()
+	print("1000 done")
 	return images
 
 def create_recognition_dataset_warped_unwarped(input_path, output_path, gt_file):
@@ -217,6 +218,7 @@ def create_recognition_dataset_warped_unwarped(input_path, output_path, gt_file)
 			key= keys[i]
 			
 			if  i%1000 ==0 :
+				print("start")
 				images = load_images(i,keys,input_path)
 			
 			try:
