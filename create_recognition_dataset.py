@@ -19,7 +19,7 @@ import numpy as np
 import cv2
 
 import lmdb
-
+from turbojpeg import TurboJPEG
 
 def order_points(pts):
     # sort the points based on their x-coordinates
@@ -156,7 +156,8 @@ def create_recognition_dataset_warped_unwarped(input_path, output_path, gt_file)
 
     os.makedirs(val_output_path, exist_ok=True)
     os.makedirs(train_output_path, exist_ok=True)
-
+    
+    jpeg_reader = TurboJPEG()
     print("Fetching Keys...")
     lines = open(gt_file).readlines()
     print("Done")
@@ -181,14 +182,17 @@ def create_recognition_dataset_warped_unwarped(input_path, output_path, gt_file)
         cnt = 1
         
         for i, key in enumerate(keys):
+            
             try :
                 img_path, word_bb, text, font = key.split("\t")
                
                 img_name = os.path.basename(img_path)
                 img_path = os.path.join(input_path, img_name)
                 
-                with open(img_path, 'rb') as f:
-                    img = cv2.imread(img_path)
+                
+                file = open(img_path)
+                img= jpeg_reader.decode(file.read(), 1)
+                #img = cv2.imread(img_path)
     
                 word_bb = word_bb.split(",")
                 word_bb = np.array([int(float(bb)) for bb in word_bb]).reshape((4, 2))
