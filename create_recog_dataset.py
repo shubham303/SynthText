@@ -190,8 +190,8 @@ def create_recognition_dataset_warped_unwarped(input_path, output_path, gt_file)
 		output_path : LMDB output path
 	"""
 	
-	val_output_path = os.path.join(output_path, "val")
-	train_output_path = os.path.join(output_path, "train")
+	val_output_path = os.path.join(output_path, "ST_valid")
+	train_output_path = os.path.join(output_path, "ST")
 	
 	os.makedirs(val_output_path, exist_ok=True)
 	os.makedirs(train_output_path, exist_ok=True)
@@ -258,7 +258,7 @@ def create_recognition_dataset_warped_unwarped(input_path, output_path, gt_file)
 					cnt += 1
 			except Exception:
 				print("error occurred: continuing")
-				raise Exception
+				
 			if cnt % 10000 == 1:
 				writeCache(env, cache)
 				cache = {}
